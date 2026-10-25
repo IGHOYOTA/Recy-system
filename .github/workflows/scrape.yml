@@ -1,0 +1,35 @@
+name: Refresh Return-It registry
+
+on:
+  schedule:
+    # Daily continuation checks; a completed registry is refreshed every 7 days.
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recy-registry-sync
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RECY_REQUIRE_POSTGRES: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install .
+      - name: Validate database configuration
+        run: python -c "import os; assert os.environ.get('DATABASE_URL'), 'Set the DATABASE_URL repository secret'"
+      - name: Initialize private PostgreSQL schema
+        run: python -m recy init-db
+      - name: Resume scrape for up to three hours
+        run: python -m recy scheduled-sync --interval-days 7 --max-seconds 10800
