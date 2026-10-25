@@ -2,8 +2,10 @@
 import json
 from contextlib import contextmanager
 from importlib.resources import files
+from urllib.parse import parse_qs, urlparse
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from .database import normalize_upc, now, quote
@@ -14,12 +16,22 @@ LOCK_ID = 72637901
 
 class PostgresDatabase:
     def __init__(self, url):
+        if not url.startswith(('postgresql://', 'postgres://')):
+            raise ValueError('DATABASE_URL must contain only a PostgreSQL URL starting with '
+                             'postgresql://; remove any duplicated DATABASE_URL= prefix')
+        try:
+            parsed = urlparse(url)
+            if not parsed.hostname or (parsed.port is not None and not 1 <= parsed.port <= 65535):
+                raise ValueError('Invalid database host or port')
+            conninfo_to_dict(url)
+        except (psycopg.ProgrammingError, ValueError):
+            raise ValueError('DATABASE_URL is malformed; URL-encode password characters '
+                             'and check the Session pooler connection string') from None
         self.url = url
 
     @contextmanager
     def connect(self):
         # SSL by default for remote Supabase; local integration tests explicitly disable it.
-        from urllib.parse import parse_qs, urlparse
         options = {} if 'sslmode' in parse_qs(urlparse(self.url).query) else {'sslmode': 'require'}
         with psycopg.connect(self.url, row_factory=dict_row, connect_timeout=15, **options) as db:
             yield db

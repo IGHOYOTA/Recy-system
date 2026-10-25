@@ -7,8 +7,20 @@ remains available for local development.
 
 ## Deploy with Supabase, Render Free, and GitHub Actions
 
-The repository includes deployment configuration. No cloud resources or secrets
-have been created. Follow these steps after pushing the repository to GitHub.
+The project API is deployed at **https://recy-api.onrender.com** on Render Free
+in Virginia. Supabase stores the registry and checkpoints. The GitHub Actions
+database secret is configured; the first complete scrape must finish before
+UPC lookup becomes ready. Check [scraper runs](https://github.com/IGHOYOTA/Recy-system/actions/workflows/scrape.yml)
+for current progress.
+
+Future code changes go through pull requests for review. After an approved PR
+is merged into `main`, Render deploys that commit after its CI checks pass.
+Infrastructure configuration changes in `render.yaml` must also be applied to
+the existing service; the initial service was provisioned through Render's API,
+so it is not automatically managed by a Blueprint.
+
+The instructions below also describe how to set up another environment. Use the
+existing Render service for this project instead of creating a duplicate.
 
 ### 1. Initialize Supabase PostgreSQL
 
@@ -27,6 +39,8 @@ pip install .
 Copy `.env.example` to `.env` and replace the placeholders. The file is ignored
 by Git and is not loaded automatically. Quote values appropriately for your
 shell, especially passwords containing `$`.
+Each line must contain a single assignment, such as `DATABASE_URL=postgresql://...`;
+do not paste a second `DATABASE_URL=` prefix into the value.
 
 ```sh
 set -a
