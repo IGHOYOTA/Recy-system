@@ -5,6 +5,12 @@ registry, reconciles a Supabase PostgreSQL mirror, and exposes a UPC verificatio
 API on Render Free. GitHub Actions runs resumable scheduled scrapes. SQLite
 remains available for local development.
 
+## Proposed next-stage database design
+
+The [user, machine-session, wallet, and manual-payout schema proposal](docs/system-schema-proposal.md)
+is available for review. It records the agreed business rules and proposed tables;
+the proposal has not been applied as a database migration or implemented as APIs.
+
 ## Deploy with Supabase, Render Free, and GitHub Actions
 
 The project API is deployed at **https://recy-api.onrender.com** on Render Free
