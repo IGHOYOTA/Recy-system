@@ -31,6 +31,23 @@ def text_content(parts):
     return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
+def repair_cell_text(html):
+    """Preserve stray '<' text without consuming the following closing cell.
+
+    Some source flavours contain '<Orange & Grapefrui' without a closing '>'.
+    HTMLParser otherwise consumes the cell terminator as part of that tag.
+    Complete tags, including quoted attributes containing '<', remain intact.
+    """
+    token = re.compile(r'''<(?:[^<>"']|"[^"]*"|'[^']*')*>|<''')
+
+    def repair(match):
+        body = token.sub(lambda t: '&lt;' if t[0] == '<' else t[0], match[2])
+        return match[1] + body + match[3]
+
+    return re.sub(r'(<t[dh]\b[^>]*>)(.*?)(</t[dh]\s*>)', repair, html,
+                  flags=re.I | re.S)
+
+
 def upc_column(headers):
     matches = [h for h in headers if re.sub(r"[^a-z]", "", h.lower()) in
                ("upc", "upccode", "upccodes", "universalproductcode")]
@@ -53,7 +70,7 @@ class RegistryHTML(HTMLParser):
         self._select = None
         self._link = None
         self._ignore = 0
-        self.feed(html)
+        self.feed(repair_cell_text(html))
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -184,8 +201,11 @@ class Scraper:
                 raise SourceError("Pagination exceeds 10,000-page limit")
             if url in visited.values():
                 raise SourceError("Pagination loop: same URL assigned to multiple pages")
-            document = RegistryHTML(self.fetch(url))
-            page_headers, rows = document.products()
+            try:
+                document = RegistryHTML(self.fetch(url))
+                page_headers, rows = document.products()
+            except SourceError as exc:
+                raise SourceError('Registry page %s (%s): %s' % (number, url, exc)) from exc
             if headers is None:
                 headers = page_headers
             if headers != page_headers:
