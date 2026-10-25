@@ -113,6 +113,7 @@ CREATE TABLE app.collection_sessions (
     CHECK (reward_total_cents IS NULL OR (accepted_count IS NOT NULL AND reward_total_cents=accepted_count::bigint*reward_per_bottle_cents)),
     CHECK (collection_status <> 'submitted' OR (ended_at IS NOT NULL AND end_received_at IS NOT NULL AND submitted_at IS NOT NULL AND machine_end_event_id IS NOT NULL)),
     CHECK (credit_due_at IS NOT DISTINCT FROM ended_at + interval '60 seconds'),
+    CHECK (reconciliation_status NOT IN ('posted','no_credit') OR collection_status='submitted'),
     CHECK (reconciliation_status <> 'posted' OR (credit_transaction_id IS NOT NULL AND reconciled_at IS NOT NULL AND credit_posted_at IS NOT NULL AND reward_total_cents IS NOT NULL AND reward_total_cents>0)),
     CHECK (reconciliation_status <> 'no_credit' OR (accepted_count IS NOT NULL AND accepted_count=0 AND reward_total_cents IS NOT NULL AND reward_total_cents=0 AND reconciled_at IS NOT NULL AND credit_transaction_id IS NULL))
 );
@@ -649,8 +650,12 @@ BEGIN
             IF NOT EXISTS (SELECT 1 FROM app.ledger_transactions WHERE id=s.credit_transaction_id AND session_id=s.id AND kind='session_credit') THEN
                 RAISE EXCEPTION 'Session credit link mismatch' USING ERRCODE='23514'; END IF;
             PERFORM app.validate_journal(s.credit_transaction_id);
-        ELSIF s.reconciliation_status='no_credit' AND EXISTS (SELECT 1 FROM app.bottle_events WHERE session_id=s.id AND status IN ('pending','accepted')) THEN
-            RAISE EXCEPTION 'Zero-credit session still has pending/accepted bottles' USING ERRCODE='23514';
+        ELSIF s.reconciliation_status='no_credit' THEN
+            IF EXISTS (SELECT 1 FROM app.bottle_events WHERE session_id=s.id AND status IN ('pending','accepted')) OR
+               NOT EXISTS (SELECT 1 FROM app.session_submissions WHERE session_id=s.id AND status='validated'
+                   AND expected_attempt_count=s.rejected_count AND expected_attempt_count=(SELECT count(*) FROM app.bottle_events WHERE session_id=s.id)) THEN
+                RAISE EXCEPTION 'Zero-credit session requires a complete validated manifest without accepted/pending bottles' USING ERRCODE='23514';
+            END IF;
         END IF;
     ELSE
         SELECT * INTO j FROM app.wallet_adjustments WHERE id=NEW.id;

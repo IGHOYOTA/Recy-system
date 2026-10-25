@@ -200,6 +200,16 @@ class ApplicationSchemaTests(unittest.TestCase):
         with self.assertRaises(self.pg.errors.CheckViolation):
             with self.db.connect() as c:self.start_session(c)
 
+    def test_empty_session_finalizes_only_after_validated_submission(self):
+        with self.db.connect() as c:s=self.start_session(c)
+        with self.assertRaises(self.pg.errors.CheckViolation):
+            with self.db.connect() as c:
+                c.execute("UPDATE app.collection_sessions SET reconciliation_status='no_credit',accepted_count=0,rejected_count=0,reward_total_cents=0,reconciled_at=now() WHERE id=%s",(s,))
+        with self.db.connect() as c:
+            c.execute("INSERT INTO app.session_submissions(session_id,machine_id,idempotency_key,request_hash,claimed_accepted_count,claimed_rejected_count,final_sequence_no,machine_end_event_id,end_reason,expected_attempt_count,manifest_hash,status,validated_at) VALUES (%s,%s,'empty','hash',0,0,0,%s,'inactivity',0,'manifest','validated',now())",(s,self.machine,uuid4()))
+            c.execute("UPDATE app.collection_sessions SET reconciliation_status='no_credit',accepted_count=0,rejected_count=0,reward_total_cents=0,reconciled_at=now() WHERE id=%s",(s,))
+        self.assertEqual(self.balance(),(700,0))
+
     def test_no_new_bottle_can_be_invented_after_submission(self):
         with self.db.connect() as c:
             s=self.start_session(c)
