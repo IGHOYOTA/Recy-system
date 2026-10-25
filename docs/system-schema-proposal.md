@@ -1,7 +1,9 @@
 # User, machine, session, wallet, and payout schema proposal
 
-Status: design for review. No tables, migrations, API behavior, or cloud configuration
-are changed by this document.
+Status: approved in PR #3. The executable database implementation is
+`recy/migrations/002_application_schema.sql`; see
+[Application database migration](application-migration.md). HTTP APIs, firmware,
+Auth-provider configuration, and recovery-worker deployment remain separate work.
 
 The product registry and its four existing `recy` tables remain unchanged,
 including the `Photo` column. Supabase Auth owns credentials and login sessions.
@@ -575,6 +577,13 @@ Backups need separate execution and protected storage; an audit row is evidence
 of a check, not a backup itself. Set PII, device evidence, and financial retention
 periods and an account-closure process before launch; do not cascade-delete
 financial records with an Auth account.
+
+Database implementation details: `wallets.ledger_version` serializes concurrent
+postings; journal headers have `request_hash` and a one-time `posted_at` seal;
+submissions store `sealed_machine_event_ids` for safe replay. The
+`bank_payout_matches` join table allocates a bank statement item across multiple
+payouts (and multiple statement items to one payout). These support the approved
+ownership, retry, immutability, and grouped-payment requirements.
 
 **Operational views and indexes**
 

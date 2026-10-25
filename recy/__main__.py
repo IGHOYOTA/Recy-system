@@ -27,6 +27,8 @@ def main():
     sub.add_parser("status")
     sub.add_parser("probe", help="Validate live first, second and last pages without importing")
     sub.add_parser("init-db", help="Apply PostgreSQL schema migration")
+    migration = sub.add_parser('migrate', help='Apply versioned PostgreSQL application migrations')
+    migration.add_argument('--plan', action='store_true', help='Show pending migrations without changing tables')
     scheduled = sub.add_parser("scheduled-sync", help="Resume a bounded PostgreSQL scrape when due")
     scheduled.add_argument("--interval-days", type=int, default=7)
     scheduled.add_argument("--max-seconds", type=int, default=10800)
@@ -38,7 +40,11 @@ def main():
             print(json.dumps(Scraper().probe(), indent=2, ensure_ascii=False))
             return
         database = get_database(args.db)
-        if args.command == "init-db":
+        if args.command == 'migrate':
+            if not hasattr(database, 'migrate'):
+                raise ValueError('migrate requires DATABASE_URL for PostgreSQL')
+            result = database.migrate(plan=args.plan)
+        elif args.command == "init-db":
             if not hasattr(database, 'initialize'):
                 raise ValueError('init-db requires DATABASE_URL for PostgreSQL')
             database.initialize()

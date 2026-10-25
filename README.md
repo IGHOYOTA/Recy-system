@@ -8,8 +8,9 @@ remains available for local development.
 ## Proposed next-stage database design
 
 The [user, machine-session, wallet, and manual-payout schema proposal](docs/system-schema-proposal.md)
-is available for review. It records the agreed business rules and proposed tables;
-the proposal has not been applied as a database migration or implemented as APIs.
+records the approved business rules. The versioned application migration and its
+verification steps are documented in [Application database migration](docs/application-migration.md).
+User, machine, wallet, and payout HTTP APIs remain a separate implementation step.
 
 ## Deploy with Supabase, Render Free, and GitHub Actions
 

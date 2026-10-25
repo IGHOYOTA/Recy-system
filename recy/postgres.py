@@ -1,5 +1,6 @@
 """Supabase/PostgreSQL backend. Schema initialization is an explicit CLI step."""
 import json
+import hashlib
 from contextlib import contextmanager
 from importlib.resources import files
 from urllib.parse import parse_qs, urlparse
@@ -33,14 +34,53 @@ class PostgresDatabase:
     def connect(self):
         # SSL by default for remote Supabase; local integration tests explicitly disable it.
         options = {} if 'sslmode' in parse_qs(urlparse(self.url).query) else {'sslmode': 'require'}
-        with psycopg.connect(self.url, row_factory=dict_row, connect_timeout=15, **options) as db:
-            yield db
+        db = psycopg.connect(self.url, row_factory=dict_row, connect_timeout=15, **options)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def initialize(self):
         migration = files('recy').joinpath('migrations/001_initial.sql').read_text()
         with self.connect() as db:
             db.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
             db.execute(migration)
+
+    def migrate(self, plan=False):
+        """Apply reviewed, checksummed migrations atomically; registry init stays separate."""
+        migrations = sorted((p for p in files('recy').joinpath('migrations').iterdir()
+                             if p.name.endswith('.sql')), key=lambda p: p.name)
+        with self.connect() as db:
+            db.execute("SET LOCAL lock_timeout = '10s'")
+            db.execute("SET LOCAL statement_timeout = '90s'")
+            db.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID + 1,))
+            exists = db.execute("SELECT to_regclass('recy.schema_migrations') AS name").fetchone()['name']
+            applied = {r['version']: r['checksum'] for r in db.execute(
+                'SELECT version,checksum FROM recy.schema_migrations')} if exists else {}
+            pending = []
+            for resource in migrations:
+                sql = resource.read_text()
+                checksum = hashlib.sha256(sql.encode()).hexdigest()
+                if resource.name in applied:
+                    if applied[resource.name] != checksum:
+                        raise SourceError('Applied migration checksum mismatch: ' + resource.name)
+                else:
+                    pending.append((resource.name, checksum, sql))
+            if plan:
+                return {'pending': [p[0] for p in pending], 'applied': sorted(applied)}
+            if not db.execute("SELECT to_regclass('auth.users') AS name").fetchone()['name']:
+                raise SourceError('Application migration requires Supabase auth.users (or the test-only Auth stub)')
+            db.execute('CREATE SCHEMA IF NOT EXISTS recy')
+            db.execute('''CREATE TABLE IF NOT EXISTS recy.schema_migrations (
+                version text PRIMARY KEY, checksum text NOT NULL,
+                applied_at timestamptz NOT NULL DEFAULT now())''')
+            db.execute('REVOKE ALL ON recy.schema_migrations FROM PUBLIC')
+            for version, checksum, sql in pending:
+                db.execute(sql)
+                db.execute('INSERT INTO recy.schema_migrations(version,checksum) VALUES (%s,%s)',
+                           (version, checksum))
+            return {'applied': [p[0] for p in pending]}
 
     @staticmethod
     def _latest(db):
