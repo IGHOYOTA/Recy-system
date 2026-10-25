@@ -103,6 +103,10 @@ Supabase. An unfinished scrape continues on the next daily or manual run. Daily
 checks exit quickly when a completed registry is less than seven days old.
 The overall job timeout is 200 minutes. Workflow concurrency prevents overlapping
 scheduled/manual runs. No credentials are saved in workflow files or artifacts.
+Merging changes to the parser, scheduled scraper, or scraper workflow into `main`
+also starts a due/resume check, so an approved scraper repair can continue from
+saved checkpoints without waiting for the next daily schedule. The seven-day
+freshness check still applies after a successful publication.
 
 The active product table changes only after every page passes validation. An
 interruption can lose the currently fetched page, but committed checkpoints

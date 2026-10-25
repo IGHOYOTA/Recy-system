@@ -109,6 +109,34 @@ class ScraperTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             RegistryHTML(RESULTS.replace('<td>1 L</td>', '')).products()
 
+    def test_recovers_live_malformed_flavour_without_shifting_columns(self):
+        document = RegistryHTML((FIXTURES / 'malformed_flavour.html').read_text())
+        headers, rows = document.products()
+        self.assertEqual(headers, ['#', 'Brand', 'Flavour', 'Product Type',
+                                   'Container Type', 'UPC', 'Photo'])
+        self.assertEqual(len(rows), 30)
+        by_number = {row[0]: dict(zip(headers, row)) for row in rows}
+        self.assertEqual(by_number['75501']['Flavour'],
+                         'Afternoon Tea FRUITS & ICE TEA <Orange & Grapefrui')
+        self.assertEqual(by_number['75502']['Flavour'],
+                         'Afternoon Tea FRUITS & ICE TEA <White Grape & Lemo')
+        self.assertEqual(by_number['75501']['UPC'], '4909411114718')
+        self.assertEqual(by_number['75502']['UPC'], '4909411114732')
+        self.assertEqual(by_number['75501']['Product Type'], 'Tea')
+
+    def test_preserves_valid_markup_and_escaped_angle_brackets(self):
+        html = RESULTS.replace('<td>Water</td>',
+            '<td><span title="comparison < value">Water</span> &lt;still literal</td>')
+        _, rows = RegistryHTML(html).products()
+        self.assertTrue(all(row[2] == 'Water <still literal' for row in rows))
+
+    def test_malformed_flavour_survives_checkpoint_round_trip(self):
+        from recy.scheduled import compact_page
+        html = ('<p title="156377 products">Database Last Updated October 23, 2026</p>' +
+                (FIXTURES / 'malformed_flavour.html').read_text())
+        self.assertEqual(RegistryHTML(html).products(),
+                         RegistryHTML(compact_page(html)).products())
+
     def test_disabled_next_link_on_last_page_is_ignored(self):
         first = RESULTS.replace('products: 2', 'products: 4') + '<a href="?Rn=2">2</a>'
         second = RESULTS.replace('products: 2', 'products: 4').replace('Example', 'Second')

@@ -123,6 +123,32 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(run_scheduled(database)['status'], 'not_due')
             fetch.assert_not_called()
 
+    def test_resume_cached_pages_then_recover_malformed_next_page(self):
+        first = RESULTS.replace('<p>Total products: 2</p>',
+            '<p title="6 products">Database Last Updated October 23, 2026</p>')
+        first += '<a href="?Rn=2">2</a><a href="?Rn=3">3</a>'
+        second = first.replace('Example', 'Second')
+        malformed = first.replace('Example', 'Third').replace('<td>Water</td>',
+            '<td>Tea <Orange & Grapefrui</td>')
+        database = MemoryCheckpoint()
+        generation = fingerprint(first)
+        database.checkpoint_start(generation)
+        page2_url = Scraper._page_url(SOURCE_URL, '?Rn=2')
+        cached = compact_page(second)
+        database.checkpoint_put(generation, page2_url, cached)
+        requested = []
+        def fetch(self, url):
+            requested.append(url)
+            if 'Rn=2' in url:
+                raise AssertionError('Previously checkpointed page must not be fetched again')
+            return malformed if 'Rn=3' in url else first
+        with patch.object(Scraper, '_fetch', fetch):
+            result = run_scheduled(database)
+        self.assertEqual(result['status'], 'published')
+        self.assertEqual(result['total'], 6)
+        self.assertTrue(any(row[2] == 'Tea <Orange & Grapefrui'
+                            for row in database.published.rows))
+
     def test_source_generation_change_discards_cached_pages(self):
         html = (FIXTURES / 'live_first.html').read_text()
         checkpoint = MemoryCheckpoint()

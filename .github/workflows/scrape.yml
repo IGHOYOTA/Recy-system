@@ -1,6 +1,12 @@
 name: Refresh Return-It registry
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'recy/source.py'
+      - 'recy/scheduled.py'
+      - '.github/workflows/scrape.yml'
   schedule:
     # Daily continuation checks; a completed registry is refreshed every 7 days.
     - cron: '23 3 * * *'
