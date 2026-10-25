@@ -38,6 +38,15 @@ class WSGITests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'DATABASE_URL'):
             get_database()
 
+    def test_invalid_database_url_does_not_expose_credentials(self):
+        from recy.postgres import PostgresDatabase
+        sensitive = 'sensitive-test-value'
+        for value in ('DATABASE_URL=postgresql://user:' + sensitive + '@host/db',
+                      'postgresql://user:' + sensitive + '@host:invalid/db'):
+            with self.assertRaises(ValueError) as caught:
+                PostgresDatabase(value)
+            self.assertNotIn(sensitive, str(caught.exception))
+
 
 class MemoryCheckpoint:
     def __init__(self):
