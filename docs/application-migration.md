@@ -5,6 +5,11 @@ The migration adds 30 tables and six views in the private `app` schema. Existing
 Return-It product data and scraper checkpoints stay in `recy`; Supabase-managed
 Auth tables are referenced without being changed or populated.
 
+The application API release additionally requires `003_api_runtime.sql`: it adds
+the private `auth_rate_limits` table (31 application tables in total), the
+machine-login Auth-exchange marker, and a submission review reason. See
+[API deployment](api.md#deploying-this-release) before activating the new routes.
+
 ## Run
 
 Install the project and load the project `.env` privately into the shell. Use the

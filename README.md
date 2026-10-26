@@ -276,9 +276,12 @@ local snapshot**. Return-It notes that not all registered products have a UPC
 documented. Every lookup includes the last sync time so callers can assess age;
 readiness does not imply freshness. API lookups never request the upstream site.
 
-The `serve` command remains an unauthenticated development server. Hosted traffic
-uses Gunicorn and `recy.wsgi:application` with Bearer authentication, as configured
-in the Render Blueprint. There are no public write routes.
+The `serve` command remains an unauthenticated registry development server. Hosted
+traffic uses Gunicorn and `recy.wsgi:application`. Registry routes use the existing
+shared API key. The application APIs use Supabase user authentication or a scoped
+machine credential; see the [API contracts and deployment guide](docs/api.md) for
+signup/login, collection sessions, wallet, manual payouts and staff operations.
+`GET /api/v1/openapi.json` provides the machine-readable route specification.
 
 ## Tests
 

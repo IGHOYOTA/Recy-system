@@ -6,13 +6,21 @@ services:
     region: virginia
     autoDeployTrigger: checksPass
     buildCommand: pip install .
-    startCommand: gunicorn recy.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 --access-logfile -
+    startCommand: gunicorn --config gunicorn.conf.py recy.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 --access-logfile -
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: RECY_REQUIRE_POSTGRES
         value: "1"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: RECY_WORKER_ENABLED
+        value: "1"
+      - key: RECY_ALLOWED_ORIGINS
+        value: ""
       - key: DATABASE_URL
         sync: false
       - key: RECY_API_KEY
