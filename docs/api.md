@@ -5,6 +5,9 @@ All paths below use `/api/v1`. The production entrypoint is
 the registry API. Discover routes at `GET /api/v1/openapi.json`.
 
 Amounts are integer CAD cents. Each accepted physical bottle earns **7 cents**.
+The [portal and operations guide](portal.md) documents the bundled frontend,
+HttpOnly browser sessions, deposit-review resolution, fill telemetry and evacuation
+APIs introduced in migration 004. `/me` additionally returns active staff roles.
 UPCs are strings so leading zeroes survive. IDs are UUIDs; timestamps use ISO 8601
 with an explicit timezone. JSON request bodies require `Content-Type:
 application/json`. Errors include `error`, `code` and `request_id`.

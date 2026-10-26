@@ -53,12 +53,25 @@ class ApplicationAPI:
                 with self.service.db.connect() as c:
                     c.execute('UPDATE app.machines SET last_seen_at=now(),last_heartbeat_at=now(),firmware_version=coalesce(%s,firmware_version) WHERE id=%s',
                               (text(body['firmware_version'],'firmware_version',100) if 'firmware_version' in body else None,machine['machine_id']))
-                return 200,{'status':'ok'}
+                    capacity=c.execute('SELECT capacity_cycle_id,accepted_since_evacuation,fill_status FROM app.machine_capacity WHERE id=%s',(machine['machine_id'],)).fetchone()
+                return 200,dict(capacity,status='ok')
+            if parts==['machines','fill-reports']:
+                from .operations import OperationsAPI
+                return OperationsAPI(self).fill_report(machine,body)
             if parts==['machines','sync-batches']:return self.sync_batch(machine,body)
         if parts[0]=='collection-sessions':return self.collection_route(method,parts[1:],environ,body)
         profile,user,sid=self.principal(environ,recent=(method!='GET' and parts[0]=='payouts'))
+        if parts==['me','summary'] and method=='GET':
+            with self.service.db.connect() as c:
+                return 200,c.execute('''SELECT
+                    (SELECT count(*) FROM app.bottle_events WHERE user_id=%s AND status='accepted') AS accepted_bottles,
+                    (SELECT count(*) FROM app.collection_sessions WHERE user_id=%s AND ended_at IS NOT NULL) AS completed_sessions,
+                    (SELECT coalesce(sum(amount_cents),0) FROM app.payout_requests WHERE user_id=%s AND status='paid') AS paid_withdrawals_cents''',
+                    (profile['id'],profile['id'],profile['id'])).fetchone()
         if parts==['me']:
-            if method=='GET':return 200,{'user':profile,'email':user.get('email'),'phone':user.get('phone')}
+            if method=='GET':
+                from .operations import OperationsAPI
+                return 200,{'user':profile,'email':user.get('email'),'phone':user.get('phone'),'roles':OperationsAPI(self).roles(profile['id'])}
             if method=='PATCH':
                 first=text(body.get('first_name'),'first_name',100);last=text(body.get('last_name'),'last_name',100)
                 with self.service.db.connect() as c:
@@ -77,6 +90,24 @@ class ApplicationAPI:
                     JOIN app.wallets w ON w.id=a.wallet_id JOIN app.ledger_transactions t ON t.id=e.transaction_id
                     WHERE w.user_id=%s ORDER BY t.created_at DESC,t.id,a.purpose LIMIT %s OFFSET %s''',(profile['id'],limit,offset)).fetchall(),
                     'limit':limit,'offset':offset}
+        if parts==['wallet','activity'] and method=='GET':
+            from .listing import filters
+            limit,offset=self.pagination(environ)
+            where,args=filters(environ,'created_at','kind')
+            with self.service.db.connect() as c:
+                return 200,{'items':c.execute('''WITH activity AS (
+                    SELECT t.id,t.kind,t.posted_at AS created_at,t.session_id,t.payout_id,
+                      coalesce(sum(e.amount_cents) FILTER (WHERE a.purpose='user_available'),0) AS available_delta_cents,
+                      coalesce(sum(e.amount_cents) FILTER (WHERE a.purpose='user_reserved'),0) AS reserved_delta_cents,
+                      (SELECT r.session_id FROM app.deposit_reviews r JOIN app.wallet_adjustments j ON j.id=r.adjustment_id
+                       WHERE j.ledger_transaction_id=t.id) AS review_session_id
+                    FROM app.ledger_entries e JOIN app.ledger_accounts a ON a.id=e.account_id
+                    JOIN app.wallets w ON w.id=a.wallet_id JOIN app.ledger_transactions t ON t.id=e.transaction_id
+                    WHERE w.user_id=%s GROUP BY t.id), balances AS (
+                      SELECT *,sum(available_delta_cents) OVER (ORDER BY created_at,id) AS available_after_cents FROM activity)
+                    SELECT id,kind,created_at,coalesce(session_id,review_session_id) AS session_id,payout_id,
+                      available_delta_cents,reserved_delta_cents,available_after_cents FROM balances WHERE true'''+where+
+                    ' ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s',[profile['id']]+args+[limit,offset]).fetchall(),'limit':limit,'offset':offset}
         if parts[0]=='payouts':
             if len(parts)==1 and method=='POST':
                 require(set(body)<= {'email','amount_cents'},'Only email and amount_cents are accepted; payouts have no fees')
@@ -85,8 +116,10 @@ class ApplicationAPI:
                 with self.service.db.connect() as c:
                     if len(parts)==1:
                         limit,offset=self.pagination(environ)
-                        return 200,{'items':c.execute('SELECT * FROM app.payout_requests WHERE user_id=%s ORDER BY requested_at DESC,id LIMIT %s OFFSET %s',
-                                                     (profile['id'],limit,offset)).fetchall(),'limit':limit,'offset':offset}
+                        from .listing import filters
+                        where,args=filters(environ,'requested_at','status')
+                        return 200,{'items':c.execute('SELECT * FROM app.payout_requests WHERE user_id=%s'+where+' ORDER BY requested_at DESC,id DESC LIMIT %s OFFSET %s',
+                                                     [profile['id']]+args+[limit,offset]).fetchall(),'limit':limit,'offset':offset}
                     if len(parts)==2:
                         row=c.execute('SELECT * FROM app.payout_requests WHERE id=%s AND user_id=%s',(identifier(parts[1]),profile['id'])).fetchone()
                         require(row,'Payout not found',404,'not_found');return 200,row
@@ -118,7 +151,8 @@ class ApplicationAPI:
         action=parts[0]
         require(action in ('signup','login','refresh','logout','recover','verify','phone','email','password'),
                 'Auth route not found',404,'not_found')
-        self.service.rate_limit(str(body.get('identifier') or body.get('email') or body.get('phone') or 'session'),
+        self.service.rate_limit(str(body.get('identifier') or body.get('email') or body.get('phone') or
+                                    environ.get('HTTP_AUTHORIZATION') or body.get('refresh_token') or 'anonymous'),
                                 environ.get('REMOTE_ADDR','unknown'),'auth:'+action)
         if action=='signup':
             payload={'email':email(body.get('email')),'password':password(body.get('password')),
@@ -187,16 +221,25 @@ class ApplicationAPI:
         if not parts and method=='GET':
             profile,user,sid=self.principal(environ)
             limit,offset=self.pagination(environ)
+            from .listing import filters
+            where,args=filters(environ,'coalesce(s.ended_at,s.started_at)',"coalesce(r.resolution,s.reconciliation_status)")
             with self.service.db.connect() as c:
-                return 200,{'items':c.execute('SELECT * FROM app.collection_sessions WHERE user_id=%s ORDER BY started_at DESC,id LIMIT %s OFFSET %s',
-                                             (profile['id'],limit,offset)).fetchall(),'limit':limit,'offset':offset}
+                return 200,{'items':c.execute('''SELECT s.*,m.machine_code,m.location AS machine_location,
+                    r.resolution AS review_resolution,r.amount_cents AS review_amount_cents,r.resolved_at AS review_resolved_at
+                    FROM app.collection_sessions s JOIN app.machines m ON m.id=s.machine_id
+                    LEFT JOIN app.deposit_reviews r ON r.session_id=s.id WHERE s.user_id=%s'''+where+
+                    ' ORDER BY s.started_at DESC,s.id DESC LIMIT %s OFFSET %s',
+                    [profile['id']]+args+[limit,offset]).fetchall(),'limit':limit,'offset':offset}
         require(parts,'Route not found',404,'not_found')
         if method=='GET':
             machine=self.service.machine(environ['HTTP_X_MACHINE_KEY']) if environ.get('HTTP_X_MACHINE_KEY') else None
             profile=None if machine else self.principal(environ)[0]
             with self.service.db.connect() as c:
                 s=self.service.session(c,parts[0],machine_id=machine['machine_id'] if machine else None,user_id=profile['id'] if profile else None)
-                if len(parts)==1:return 200,s
+                if len(parts)==1:
+                    review=c.execute('SELECT resolution AS review_resolution,amount_cents AS review_amount_cents,resolved_at AS review_resolved_at FROM app.deposit_reviews WHERE session_id=%s',(s['id'],)).fetchone()
+                    if review:s.update(review)
+                    return 200,s
                 if parts[1:]==['bottles']:
                     limit,offset=self.pagination(environ)
                     return 200,{'items':c.execute('SELECT * FROM app.bottle_events WHERE session_id=%s ORDER BY sequence_no LIMIT %s OFFSET %s',
@@ -266,6 +309,9 @@ class ApplicationAPI:
 
     def admin_route(self,method,parts,environ,body):
         require(parts,'Route not found',404,'not_found')
+        if parts[0] in ('deposit-reviews','fleet','overview','depots','evacuations','team','audit-events'):
+            from .operations import OperationsAPI
+            return OperationsAPI(self).dispatch(method,parts,environ,body)
         administrator=parts[0] in ('machines','staff-roles','wallet-adjustments')
         profile,user,sid=self.principal(environ,recent=method!='GET',administrator=administrator,staff=True)
         with self.service.db.connect() as c:
@@ -306,7 +352,9 @@ class ApplicationAPI:
             if parts[0]=='payouts':
                 if len(parts)==1 and method=='GET':
                     limit,offset=self.pagination(environ)
-                    return 200,{'items':c.execute('SELECT * FROM app.payout_requests ORDER BY requested_at,id LIMIT %s OFFSET %s',(limit,offset)).fetchall(),
+                    from .listing import filters
+                    where,args=filters(environ,'requested_at','status')
+                    return 200,{'items':c.execute('SELECT * FROM app.payout_requests WHERE true'+where+' ORDER BY requested_at,id LIMIT %s OFFSET %s',args+[limit,offset]).fetchall(),
                                 'limit':limit,'offset':offset}
                 if len(parts)==2 and method=='GET':
                     row=c.execute('SELECT * FROM app.payout_requests WHERE id=%s',(identifier(parts[1]),)).fetchone()
@@ -317,7 +365,7 @@ class ApplicationAPI:
             if parts[0]=='machines':return self.admin_machines(c,profile,method,parts[1:],environ,body)
             if parts[0]=='staff-roles' and method=='POST' and len(parts)==1:
                 target=identifier(body.get('user_id'),'user_id');role=body.get('role')
-                require(role in ('administrator','payout_processor'),'Invalid staff role')
+                require(role in ('administrator','payout_processor','operations_reviewer','collector','depot_receiver'),'Invalid staff role')
                 if body.get('revoke'):
                     c.execute('UPDATE app.staff_roles SET revoked_at=now() WHERE user_id=%s AND role=%s AND revoked_at IS NULL',(target,role))
                 else:c.execute('''INSERT INTO app.staff_roles(user_id,role,granted_by) VALUES (%s,%s,%s)

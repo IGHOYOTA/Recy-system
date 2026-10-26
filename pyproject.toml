@@ -16,4 +16,4 @@ recy = "recy.__main__:main"
 include = ["recy*"]
 
 [tool.setuptools.package-data]
-recy = ["migrations/*.sql"]
+recy = ["migrations/*.sql", "frontend/*.html", "frontend/*.js", "frontend/*.css", "frontend/*.svg"]

@@ -75,7 +75,8 @@ class ApplicationAPITests(unittest.TestCase):
     def request(self,path,method='GET',body=None,token=None,machine=False,key=None,raw=None,origin=None):
         captured=[]
         encoded=raw if raw is not None else json.dumps(body).encode() if body is not None else b''
-        environ={'PATH_INFO':path,'REQUEST_METHOD':method,'wsgi.input':io.BytesIO(encoded),
+        route,_,query=path.partition('?')
+        environ={'PATH_INFO':route,'QUERY_STRING':query,'REQUEST_METHOD':method,'wsgi.input':io.BytesIO(encoded),
                  'CONTENT_LENGTH':str(len(encoded)),'CONTENT_TYPE':'application/json','REMOTE_ADDR':'127.0.0.1'}
         if token:environ['HTTP_AUTHORIZATION']='Bearer '+token
         if machine:environ['HTTP_X_MACHINE_KEY']=self.machine_key

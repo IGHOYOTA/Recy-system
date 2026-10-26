@@ -36,7 +36,7 @@ def main():
     worker.add_argument('--poll-seconds', type=int, default=5)
     staff = sub.add_parser('grant-staff', help='Owner-only initial staff provisioning using database credentials')
     staff.add_argument('--auth-user-id', required=True)
-    staff.add_argument('--role', choices=['administrator','payout_processor'], default='administrator')
+    staff.add_argument('--role', choices=['administrator','payout_processor','operations_reviewer','collector','depot_receiver'], default='administrator')
     scheduled = sub.add_parser("scheduled-sync", help="Resume a bounded PostgreSQL scrape when due")
     scheduled.add_argument("--interval-days", type=int, default=7)
     scheduled.add_argument("--max-seconds", type=int, default=10800)

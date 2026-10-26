@@ -10,7 +10,7 @@ from .backend import get_database
 def refresh_alerts(service):
     with service.db.connect() as c:
         for query,kind,resource in (
-            ("SELECT session_id AS id FROM app.session_credit_sla WHERE overdue AND credit_posted_at IS NULL",'credit_overdue','collection_session'),
+            ("SELECT session_id AS id FROM app.session_credit_sla s WHERE overdue AND credit_posted_at IS NULL AND NOT EXISTS (SELECT 1 FROM app.deposit_reviews r WHERE r.session_id=s.session_id AND r.status='resolved')",'credit_overdue','collection_session'),
             ("SELECT payout_id AS id FROM app.payout_processing_sla WHERE overdue AND status IN ('pending','processing','needs_review')",'payout_overdue','payout_request')):
             for row in c.execute(query).fetchall():
                 c.execute('''INSERT INTO app.operational_alerts(kind,resource_type,resource_id,deduplication_key,severity)
@@ -39,8 +39,10 @@ def run_jobs(service,limit=10):
             if job['kind']=='session_reconcile':
                 service.reconcile(job['resource_id'])
                 with service.db.connect() as c:
-                    s=c.execute('SELECT reconciliation_status FROM app.collection_sessions WHERE id=%s',(job['resource_id'],)).fetchone()
-                    if not s or s['reconciliation_status']=='needs_review':result='needs_review'
+                    s=c.execute('''SELECT s.reconciliation_status,r.status AS review_status
+                        FROM app.collection_sessions s LEFT JOIN app.deposit_reviews r ON r.session_id=s.id
+                        WHERE s.id=%s''',(job['resource_id'],)).fetchone()
+                    if not s or (s['reconciliation_status']=='needs_review' and s['review_status']!='resolved'):result='needs_review'
             elif job['kind']=='machine_auth_revoke':
                 with service.db.connect() as c:
                     row=c.execute('SELECT * FROM app.machine_logins WHERE id=%s FOR NO KEY UPDATE',(job['resource_id'],)).fetchone()

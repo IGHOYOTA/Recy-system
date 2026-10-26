@@ -74,7 +74,7 @@ class AppService:
     def staff(self, profile, administrator=False):
         with self.db.connect() as c:
             row=c.execute('SELECT role FROM app.staff_roles WHERE user_id=%s AND revoked_at IS NULL' +
-                          (" AND role='administrator'" if administrator else ''), (profile['id'],)).fetchone()
+                          (" AND role='administrator'" if administrator else " AND role IN ('administrator','payout_processor')"), (profile['id'],)).fetchone()
         require(row is not None, 'Staff authorization required', 403, 'forbidden')
 
     def rate_limit(self, identity, remote, operation):
@@ -132,6 +132,8 @@ class AppService:
             old=self.replay(c,'machine',machine['machine_id'],'start_session',key,body)
             if old:return self.session(c,old,machine_id=machine['machine_id'])
             require(machine['machine_status']=='active' and machine['operating_mode']=='live', 'Machine is not accepting bottles',409,'machine_unavailable')
+            require(c.execute('SELECT fill_status FROM app.machine_capacity WHERE id=%s',(machine['machine_id'],)).fetchone()['fill_status']!='full',
+                    'Machine is full',409,'machine_full')
             login=c.execute('''INSERT INTO app.machine_logins(user_id,machine_id,supabase_auth_session_id,auth_revoked_before_collection)
                 VALUES (%s,%s,%s,true) RETURNING id''',(profile['id'],machine['machine_id'],auth_session_id)).fetchone()['id']
             rate=c.execute("SELECT * FROM app.reward_rates WHERE effective_from<=now() AND (effective_until IS NULL OR effective_until>now())").fetchone()
@@ -168,6 +170,8 @@ class AppService:
             require(machine['machine_status']=='active' and machine['operating_mode']=='live',
                     'Machine is not accepting new bottles',409,'machine_unavailable')
             require(s['collection_status']=='active','Session is closed',409,'session_closed')
+            require(c.execute('SELECT fill_status FROM app.machine_capacity WHERE id=%s',(machine['machine_id'],)).fetchone()['fill_status']!='full',
+                    'Machine is full; return the bottle',409,'machine_full')
             try:eligible,run=self.registry_lookup(c,code)
             except APIError as exc:
                 if exc.code!='registry_unavailable':raise
