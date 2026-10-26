@@ -7,6 +7,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from http import HTTPStatus
 from uuid import UUID, uuid4
+from importlib.resources import files
+from urllib.parse import urlsplit
 
 import psycopg
 
@@ -51,18 +53,33 @@ def application(environ,start_response):
     request_id=str(uuid4())
     status,body=404,{'error':'Route not found'}
     extra=[]
+    assets={'/':'index.html','/assets/app.js':'app.js','/assets/api.js':'api.js','/assets/styles.css':'styles.css','/assets/mark.svg':'mark.svg'}
+    if path in assets and method=='GET':
+        name=assets[path]
+        content=files('recy').joinpath('frontend/'+name).read_bytes()
+        mime='text/html' if name.endswith('.html') else 'text/css' if name.endswith('.css') else 'image/svg+xml' if name.endswith('.svg') else 'text/javascript'
+        start_response('200 OK',[('Content-Type',mime+'; charset=utf-8'),('Content-Length',str(len(content))),
+            ('Cache-Control','no-cache'),('X-Content-Type-Options','nosniff'),('Referrer-Policy','same-origin'),
+            ('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")])
+        return [content]
     origin=environ.get('HTTP_ORIGIN')
     try:
         if origin:
             allowed=[s.strip() for s in os.environ.get('RECY_ALLOWED_ORIGINS','').split(',') if s.strip()]
-            require(origin in allowed,'Origin is not allowed',403,'origin_forbidden')
+            own=urlsplit(origin)
+            same_origin=own.scheme in ('http','https') and own.netloc==environ.get('HTTP_HOST')
+            require(origin in allowed or same_origin,'Origin is not allowed',403,'origin_forbidden')
             extra.extend([('Access-Control-Allow-Origin',origin),('Vary','Origin')])
         if method=='OPTIONS':
             require(origin is not None,'CORS Origin required')
             status,body=200,{}
             extra.extend([('Access-Control-Allow-Methods','GET, POST, PATCH, OPTIONS'),
-                          ('Access-Control-Allow-Headers','Authorization, Content-Type, Idempotency-Key, X-Machine-Key'),
+                          ('Access-Control-Allow-Headers','Authorization, Content-Type, Idempotency-Key, X-Machine-Key, X-Recy-Browser'),
                           ('Access-Control-Max-Age','600')])
+        elif path.startswith('/api/v1/browser/'):
+            from .browser import dispatch
+            status,body,cookies=dispatch(environ,read_body(environ),get_database())
+            extra.extend(cookies)
         elif path in ('/health','/ready','/api/v1/schema') or path.startswith('/api/v1/upcs/'):
             if method!='GET':status,body=405,{'error':'Method not allowed'}
             elif path=='/health':status,body=200,{'status':'ok'}

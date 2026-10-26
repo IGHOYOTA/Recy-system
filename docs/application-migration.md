@@ -10,6 +10,10 @@ the private `auth_rate_limits` table (31 application tables in total), the
 machine-login Auth-exchange marker, and a submission review reason. See
 [API deployment](api.md#deploying-this-release) before activating the new routes.
 
+Migration `004_operations_portal.sql` adds five private operations tables (36 in
+total), the `machine_capacity` view, capacity-cycle tracking, additional operational
+roles and immutable review/custody records. See the [portal guide](portal.md).
+
 ## Run
 
 Install the project and load the project `.env` privately into the shell. Use the

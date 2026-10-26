@@ -81,7 +81,7 @@ class ApplicationSchemaTests(unittest.TestCase):
         with self.db.connect() as c:
             self.assertEqual(c.execute('SELECT count(*) AS n FROM app.reward_rates').fetchone()['n'],1)
             self.assertEqual(c.execute('SELECT html FROM recy.scrape_pages').fetchone()['html'],'saved')
-            self.assertEqual(c.execute("SELECT count(*) AS n FROM pg_tables WHERE schemaname='app'").fetchone()['n'],31)
+            self.assertEqual(c.execute("SELECT count(*) AS n FROM pg_tables WHERE schemaname='app'").fetchone()['n'],36)
 
     def test_migration_plan_and_checksum_protect_applied_history(self):
         from recy.source import SourceError

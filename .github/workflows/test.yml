@@ -25,3 +25,5 @@ jobs:
           python-version: '3.12'
       - run: pip install .
       - run: python -m unittest discover -v
+      - run: node --input-type=module --check < recy/frontend/app.js
+      - run: node --input-type=module --check < recy/frontend/api.js

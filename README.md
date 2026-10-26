@@ -283,6 +283,13 @@ machine credential; see the [API contracts and deployment guide](docs/api.md) fo
 signup/login, collection sessions, wallet, manual payouts and staff operations.
 `GET /api/v1/openapi.json` provides the machine-readable route specification.
 
+The customer and back-office portal is available at `/` on the same service.
+It includes account access, bottle deposits, wallet activity, withdrawals, deposit
+reviews, machine capacity and evacuation custody reports. See the
+[portal guide](docs/portal.md) for local preview, machine sensor messages,
+permissions and migration 004 deployment. Run `python scripts/dev.py` for a
+loopback-only portal server; there is no frontend build or separate hosting bill.
+
 ## Tests
 
 ```sh
