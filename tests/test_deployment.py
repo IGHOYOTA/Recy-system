@@ -115,12 +115,12 @@ class CheckpointTests(unittest.TestCase):
             self.assertFalse(any('Rn=2' in url for url in requested))
             self.assertEqual(database.pages, {})
 
-    def test_fresh_registry_skips_network(self):
-        from recy.database import now
+    def test_no_due_refresh_skips_network(self):
+        from recy.refresh import run_due_sync
         database = MagicMock()
-        database.status.return_value = {'completed_at': now()}
+        database.claim_source_refresh.return_value = None
         with patch.object(Scraper, '_fetch') as fetch:
-            self.assertEqual(run_scheduled(database)['status'], 'not_due')
+            self.assertEqual(run_due_sync(database)['status'], 'not_due')
             fetch.assert_not_called()
 
     def test_resume_cached_pages_then_recover_malformed_next_page(self):

@@ -28,6 +28,9 @@ def main():
     sub.add_parser("status")
     sub.add_parser("probe", help="Validate live first, second and last pages without importing")
     sub.add_parser("init-db", help="Apply PostgreSQL schema migration")
+    sub.add_parser('init-source-monitor', help='Apply only the source-monitor scheduling migration')
+    check = sub.add_parser('check-source-update', help='Check source date and queue a changed version for midnight')
+    check.add_argument('--timezone', default='America/Vancouver')
     migration = sub.add_parser('migrate', help='Apply versioned PostgreSQL application migrations')
     migration.add_argument('--plan', action='store_true', help='Show pending migrations without changing tables')
     worker = sub.add_parser('work', help='Process durable application recovery jobs')
@@ -38,7 +41,6 @@ def main():
     staff.add_argument('--auth-user-id', required=True)
     staff.add_argument('--role', choices=['administrator','payout_processor','operations_reviewer','collector','depot_receiver'], default='administrator')
     scheduled = sub.add_parser("scheduled-sync", help="Resume a bounded PostgreSQL scrape when due")
-    scheduled.add_argument("--interval-days", type=int, default=7)
     scheduled.add_argument("--max-seconds", type=int, default=10800)
     scheduled.add_argument("--delay", type=float, default=1.0)
     scheduled.add_argument("--dry-run", action="store_true")
@@ -72,6 +74,15 @@ def main():
             if not hasattr(database, 'migrate'):
                 raise ValueError('migrate requires DATABASE_URL for PostgreSQL')
             result = database.migrate(plan=args.plan)
+        elif args.command == 'init-source-monitor':
+            if not hasattr(database,'initialize_source_monitor'):
+                raise ValueError('Source monitoring requires DATABASE_URL for PostgreSQL')
+            result=database.initialize_source_monitor()
+        elif args.command == 'check-source-update':
+            if not hasattr(database,'record_source_observation'):
+                raise ValueError('Source monitoring requires DATABASE_URL for PostgreSQL')
+            from .refresh import check_source_update
+            result=check_source_update(database,args.timezone)
         elif args.command == "init-db":
             if not hasattr(database, 'initialize'):
                 raise ValueError('init-db requires DATABASE_URL for PostgreSQL')
@@ -80,8 +91,8 @@ def main():
         elif args.command == 'scheduled-sync':
             if not hasattr(database, 'checkpoint_start'):
                 raise ValueError('scheduled-sync requires DATABASE_URL for PostgreSQL')
-            from .scheduled import run_scheduled
-            result = run_scheduled(database, args.interval_days, args.max_seconds, args.delay, args.dry_run)
+            from .refresh import run_due_sync
+            result = run_due_sync(database, args.max_seconds, args.delay, args.dry_run)
         elif args.command == "sync":
             if args.delay < 0 or not 0 <= args.max_removal_fraction <= 1:
                 raise ValueError("Delay must be nonnegative; removal fraction must be between 0 and 1")

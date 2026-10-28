@@ -364,3 +364,20 @@ class ApplicationAPITests(unittest.TestCase):
         self.assertEqual(result['collection_status'],'submitted')
         self.assertEqual(result['reconciliation_status'],'needs_review')
         self.assertEqual(self.balance(),(700,0))
+
+    def test_unchanged_source_check_keeps_old_publication_usable_but_not_indefinitely(self):
+        from datetime import date
+        from recy.refresh import next_midnight
+        with self.db.connect() as c:
+            c.execute("UPDATE recy.sync_runs SET completed_at='2020-01-01T00:00:00+00:00',source_updated_on='2020-01-01'")
+        now=utcnow()
+        self.db.record_source_observation(date(2020,1,1),now,next_midnight(now),'America/Vancouver')
+        sid=self.start()['session_id']
+        _,row=self.bottle(sid)
+        self.assertEqual(row['eligibility_status'],'eligible')
+        with self.db.connect() as c:c.execute("UPDATE recy.source_monitor SET last_checked_at=now()-interval '3 days'")
+        _,row=self.bottle(sid,2)
+        self.assertEqual(row['eligibility_status'],'unavailable')
+        self.db.record_source_observation(date(2020,1,2),now,next_midnight(now),'America/Vancouver')
+        _,row=self.bottle(sid,3)
+        self.assertEqual(row['eligibility_status'],'unavailable')

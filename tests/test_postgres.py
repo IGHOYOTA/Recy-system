@@ -47,6 +47,7 @@ class PostgresTests(contract.DatabaseTests):
         self.assertTrue(self.db.verify('001234567890')['registered'])
 
     def test_scheduled_scrape_publishes_and_cleans_checkpoint(self):
+        self.db.initialize_source_monitor()
         from recy.scheduled import run_scheduled
         from recy.source import SOURCE_URL
         first = contract.RESULTS.replace('<p>Total products: 2</p>',

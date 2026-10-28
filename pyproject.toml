@@ -7,7 +7,7 @@ name = "recy-registry"
 version = "0.1.0"
 description = "Return-It registry mirror and UPC verification API"
 requires-python = ">=3.9"
-dependencies = ["psycopg[binary]>=3.2,<4", "gunicorn>=23,<24"]
+dependencies = ["psycopg[binary]>=3.2,<4", "gunicorn>=23,<24", "tzdata>=2026.6"]
 
 [project.scripts]
 recy = "recy.__main__:main"

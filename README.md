@@ -103,42 +103,40 @@ In **Settings → Secrets and variables → Actions**, add a repository secret
 named **`DATABASE_URL`** with the same Supabase Session pooler string. Then open
 **Actions → Refresh Return-It registry → Run workflow** for the initial scrape.
 
-`.github/workflows/scrape.yml` installs the project, applies the migration, and
-checks daily at **03:23 UTC**. A completed registry is refreshed every **7 days**.
-Each invocation works for at most **3 hours**, checkpointing fetched pages in
-Supabase. An unfinished scrape continues on the next daily or manual run. Daily
-checks exit quickly when a completed registry is less than seven days old.
-The overall job timeout is 200 minutes. Workflow concurrency prevents overlapping
-scheduled/manual runs. No credentials are saved in workflow files or artifacts.
-Merging changes to the parser, scheduled scraper, or scraper workflow into `main`
-also starts a due/resume check, so an approved scraper repair can continue from
-saved checkpoints without waiting for the next daily schedule. The seven-day
-freshness check still applies after a successful publication.
+The workflow checks the site's **Database Last Updated** date daily at
+**11:23 p.m. America/Vancouver**. A newer date queues a scrape for the next
+**12:00 midnight** in Vancouver. An unchanged or older date does not start another
+scrape; the previous automatic seven-day refresh has been removed.
 
-The active product table changes only after every page passes validation. An
-interruption can lose the currently fetched page, but committed checkpoints
-survive. When the source update date, count, first-page columns, or first-page
-rows change, the old checkpoint is discarded. Fetched pages must match the
-source update date/count; the first page is checked again before publication.
-The source has no transactional snapshot feed, so changes elsewhere that do not
-alter these indicators cannot be ruled out.
+Each scrape invocation works for at most **3 hours**, saving unpublished page
+checkpoints in Supabase. Recovery slots at **3:15, 6:15 and 9:15 a.m.** resume only
+a due changed-version job. With no due job they exit without requesting Return-It.
+GitHub Actions can delay schedules, so midnight is the target rather than a strict
+start-time guarantee. Workflow concurrency and database leases prevent overlapping
+workers. No credentials are stored in workflow files or artifacts.
 
-Checkpoints contain table content and relevant links, excluding repeated site
-navigation and scripts. They are deleted after successful publication. Monitor
-Supabase storage and GitHub Actions usage: public standard runners are free,
-while private repositories have a finite monthly allowance. Frequent restarts
-or long scrapes can exhaust it. Schedules can be delayed.
-See [Actions billing](https://docs.github.com/en/actions/concepts/billing-and-usage).
+On an approved merge, the workflow initializes only the private registry and source
+monitoring state (migration 005), then checks the source date. It never implicitly
+upgrades unrelated application tables. A code push cannot force a bulk refresh.
+Manual workflow runs offer **check** (queue a changed date) and **scrape** (run or
+resume an already-due job); neither bypasses the date or midnight gate.
 
-Run the same scheduled operation locally after loading environment variables:
+The active product table changes only after a complete validated snapshot. Failed
+fetches, time budgets and dry runs do not mark a source date imported. Newer releases
+receive their own midnight deadline; source rollback and invalid dates fail closed.
+See [source refresh scheduling](docs/source-refresh.md) for baselines, recovery,
+clock rules, and operational commands.
 
 ```sh
-python -m recy scheduled-sync --interval-days 7 --max-seconds 10800
+python -m recy init-db
+python -m recy init-source-monitor
+python -m recy check-source-update --timezone America/Vancouver
+python -m recy scheduled-sync --max-seconds 10800
 ```
 
-Use `--interval-days 0` to force a refresh. `--dry-run` retains checkpoints and
-checks the final reconciliation without publishing. An incomplete successful
-run reports `status: checkpointed`; a publication reports `status: published`.
+`--dry-run` retains checkpoints without publishing. `--interval-days` is removed.
+An operator can still explicitly run the uninterrupted `sync` command when a
+reviewed, forced full refresh is necessary; it is never called by the scheduler.
 
 For local production-server testing:
 
