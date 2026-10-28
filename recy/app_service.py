@@ -146,10 +146,17 @@ class AppService:
 
     @staticmethod
     def registry_lookup(c, code):
-        latest=c.execute('SELECT id,headers,completed_at FROM recy.sync_runs ORDER BY id DESC LIMIT 1').fetchone()
+        latest=c.execute('SELECT * FROM recy.sync_runs ORDER BY id DESC LIMIT 1').fetchone()
         require(latest is not None,'Registry has not been published',503,'registry_unavailable')
-        require(utcnow()-datetime.fromisoformat(latest['completed_at'])<=timedelta(days=8),
-                'Registry requires a fresh publication',503,'registry_unavailable')
+        fresh=utcnow()-datetime.fromisoformat(latest['completed_at'])<=timedelta(days=8)
+        if not fresh and c.execute("SELECT to_regclass('recy.source_monitor') AS name").fetchone()['name']:
+            monitor=c.execute('SELECT * FROM recy.source_monitor WHERE id=1').fetchone()
+            if monitor and utcnow()-monitor['last_checked_at']<=timedelta(days=2):
+                from .refresh import imported_date
+                baseline=imported_date(latest)
+                known=latest.get('source_updated_on')
+                fresh=(monitor['observed_source_date']==baseline if known else monitor['observed_source_date']<=baseline)
+        require(fresh,'Registry requires a fresh publication or an up-to-date source check',503,'registry_unavailable')
         column=upc_column(json.loads(latest['headers']))
         match=c.execute('SELECT 1 FROM recy.registered_products WHERE recy.normalize_upc(%s)=%%s LIMIT 1' % quote(column),(code,)).fetchone()
         return bool(match),latest['id']

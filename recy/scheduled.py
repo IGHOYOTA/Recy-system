@@ -4,7 +4,7 @@ import json
 import re
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from html import escape
 
 from .source import RegistryHTML, Scraper, SourceError, SOURCE_URL, text_content
@@ -56,16 +56,18 @@ def compact_page(html):
     return ''.join(parts)
 
 
-def run_scheduled(database, interval_days=7, max_seconds=10800, delay=1.0, dry_run=False):
-    if interval_days < 0 or max_seconds < 1 or delay < 0:
-        raise ValueError('Invalid schedule interval, time budget, or delay')
-    latest = database.status()
-    if latest and datetime.now(timezone.utc) - datetime.fromisoformat(latest['completed_at']) < timedelta(days=interval_days):
-        return {'status': 'not_due', 'last_synced_at': latest['completed_at']}
+def run_scheduled(database, max_seconds=10800, delay=1.0, dry_run=False, first_html=None, refresh_lease=None):
+    if max_seconds < 1 or delay < 0:
+        raise ValueError('Invalid time budget or delay')
     scraper = Scraper(delay=delay)
     deadline = time.monotonic() + max_seconds
     fetch = scraper.fetch
-    first = fetch(SOURCE_URL)
+    first = first_html if first_html is not None else fetch(SOURCE_URL)
+    from .refresh import imported_date, source_date
+    observed = source_date(first, datetime.now(timezone.utc))
+    baseline = imported_date(database.status())
+    if baseline is not None and observed <= baseline:
+        return {'status':'already_current','source_updated_on':observed.isoformat()}
     generation = fingerprint(first)
     version = source_version(RegistryHTML(first))
     started_at = database.checkpoint_start(generation)
@@ -99,7 +101,7 @@ def run_scheduled(database, interval_days=7, max_seconds=10800, delay=1.0, dry_r
                 'message': 'Resume on next scheduled or manual run; active registry unchanged'}
     if fingerprint(fetch(SOURCE_URL)) != generation:
         raise SourceError('Registry changed before publication; active registry unchanged')
-    report = database.sync(snapshot, started_at, dry_run=dry_run)
+    report = database.sync(snapshot, started_at, dry_run=dry_run, source_updated_on=observed, refresh_lease=refresh_lease)
     if not dry_run:
         database.checkpoint_clear(generation)
     return {'status': 'dry_run' if dry_run else 'published', **report}

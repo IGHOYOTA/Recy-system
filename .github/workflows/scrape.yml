@@ -6,11 +6,25 @@ on:
     paths:
       - 'recy/source.py'
       - 'recy/scheduled.py'
+      - 'recy/refresh.py'
+      - 'recy/postgres.py'
+      - 'recy/__main__.py'
+      - 'pyproject.toml'
+      - 'recy/migrations/005_source_refresh_schedule.sql'
       - '.github/workflows/scrape.yml'
   schedule:
-    # Daily continuation checks; a completed registry is refreshed every 7 days.
-    - cron: '23 3 * * *'
+    # B.C. uses permanent Pacific time (UTC-7) from March 2026. Newer source dates queue next midnight.
+    - cron: '23 6 * * *'
+    - cron: '0 7 * * *'
+    # Resume only a due changed-version job after an interruption or time budget.
+    - cron: '15 10,13,16 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Check the site date or run/resume an already-due job'
+        type: choice
+        options: [check, scrape]
+        default: check
 
 permissions:
   contents: read
@@ -20,7 +34,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scrape:
+  registry:
     runs-on: ubuntu-latest
     timeout-minutes: 200
     env:
@@ -35,7 +49,13 @@ jobs:
       - run: pip install .
       - name: Validate database configuration
         run: python -c "import os; assert os.environ.get('DATABASE_URL'), 'Set the DATABASE_URL repository secret'"
-      - name: Initialize private PostgreSQL schema
-        run: python -m recy init-db
-      - name: Resume scrape for up to three hours
-        run: python -m recy scheduled-sync --interval-days 7 --max-seconds 10800
+      - name: Initialize registry and source-only scheduling state
+        run: |
+          python -m recy init-db
+          python -m recy init-source-monitor
+      - name: Check published source date and queue next midnight
+        if: github.event_name == 'push' || github.event.schedule == '23 6 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'check')
+        run: python -m recy check-source-update --timezone America/Vancouver
+      - name: Run or resume a changed version only when its midnight is due
+        if: (github.event_name == 'schedule' && github.event.schedule != '23 6 * * *') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'scrape')
+        run: python -m recy scheduled-sync --max-seconds 10800
