@@ -329,7 +329,7 @@ function account() {
       "Your account",
       "Keep your details and sign-in information up to date.",
     ) +
-    `<div class="grid two"><section class="card"><div class="card-title"><h2>Personal details</h2>${icon("user")}</div><div data-error></div><form id="profile-form"><div class="field-row">${field("first_name", "First name", "text", 'required maxlength="100" autocomplete="given-name"', me.user.first_name)}${field("last_name", "Last name", "text", 'required maxlength="100" autocomplete="family-name"', me.user.last_name)}</div><button class="button" type="submit">Save details</button></form></section><section class="card"><div class="card-title"><h2>Security & contact</h2>${icon("settings")}</div>${details({ Email: me.email, Phone: me.phone || "Not linked" })}<div class="form-actions">${button("Change email", "change-email")}${button("Link / change phone", "change-phone")}${button("Change password", "change-password")}</div><p class="supporting">Contact changes require verification. Sign in again before sensitive changes if prompted.</p></section></div>`
+    `<div class="grid two"><section class="card"><div class="card-title"><h2>Personal details</h2>${icon("user")}</div><div data-error></div><form id="profile-form"><div class="field-row">${field("first_name", "First name", "text", 'required maxlength="100" autocomplete="given-name"', me.user.first_name)}${field("last_name", "Last name", "text", 'required maxlength="100" autocomplete="family-name"', me.user.last_name)}</div><button class="button" type="submit">Save details</button></form></section><section class="card"><div class="card-title"><h2>Security & contact</h2>${icon("settings")}</div>${details({ Email: me.email, Phone: me.phone || "Not linked" })}<div class="form-actions">${button("Change email", "change-email")}${button("Change password", "change-password")}</div><p class="supporting">Contact changes require verification. Sign in again before sensitive changes if prompted.</p></section></div>`
   );
 }
 async function support(admin = false) {
@@ -516,14 +516,17 @@ let verificationContact = "";
 function authPage(type) {
   const signup = type === "signup",
     recover = type === "recover",
-    verify = type === "verify",
+    verify = ["verify", "verify-recovery"].includes(type),
     reset = type === "reset-password";
+  const recoveryVerification = type === "verify-recovery";
   const title = signup
     ? "A fresh start for your bottles."
     : recover
       ? "Let’s get you back in."
       : verify
-        ? "Verify your account."
+        ? recoveryVerification
+          ? "Confirm your password reset."
+          : "Verify your email."
         : reset
           ? "Choose a new password."
           : "Welcome back.";
@@ -532,13 +535,15 @@ function authPage(type) {
     : recover
       ? "We’ll send recovery instructions to your email."
       : verify
-        ? "Enter the verification code sent to your email or phone."
+        ? recoveryVerification
+          ? "Enter the password recovery code sent to your email."
+          : "Enter the confirmation code sent to your email."
         : reset
           ? "Use a strong, unique password for your Recy account."
           : "Log in to see your returns, rewards and wallet.";
   app.innerHTML =
     publicHeader() +
-    `<main class="auth-layout"><section class="card"><p class="eyebrow">Your recycling journey</p><h1 class="section-gap">${title}</h1><p class="intro">${intro}</p><div data-error></div><form id="auth-form" data-type="${type}">${signup ? `<div class="field-row">${field("first_name", "First name", "text", 'required autocomplete="given-name" maxlength="100"')}${field("last_name", "Last name", "text", 'required autocomplete="family-name" maxlength="100"')}</div>` : ""}${signup || recover ? field("email", "Email", "email", 'required autocomplete="email"') : ""}${signup ? field("phone", "Phone number", "tel", 'required placeholder="+16045550123" autocomplete="tel"') + '<p class="supporting">Use your international country code. Verify your phone after confirming your email to enable phone login.</p>' : ""}${type === "login" ? field("identifier", "Email or verified phone", "text", 'required autocomplete="username"') : ""}${signup || type === "login" || reset ? field("password", reset ? "New password" : "Password", "password", `required minlength="8" maxlength="1024" autocomplete="${type === "login" ? "current-password" : "new-password"}"`) + `<button class="link" data-action="toggle-password" type="button">Show password</button>` : ""}${signup || reset ? field("confirm_password", "Confirm password", "password", 'required minlength="8" autocomplete="new-password"') : ""}${verify ? select("type", "Verification type", option("email", "Email confirmation") + option("recovery", "Password recovery") + option("phone_change", "Phone verification")) + field("contact", "Email or phone", "text", "required", verificationContact) + field("token", "Verification code", "text", 'required autocomplete="one-time-code" maxlength="300"') : ""}<div class="form-actions"><button class="button" type="submit">${signup ? "Create account" : recover ? "Send recovery instructions" : verify ? "Verify account" : reset ? "Save new password" : "Log in"} ${icon("arrow")}</button></div></form><p class="auth-switch">${signup ? 'Already have an account? <a class="link" href="#/login">Log in</a>' : type === "login" ? 'New to Recy? <a class="link" href="#/signup">Create account</a><br><br><a class="link" href="#/recover">Forgot password?</a>' : '<a class="link" href="#/login">Back to log in</a>'}</p>${signup ? '<p class="supporting">Bottle rewards are credited after your machine session is submitted. Withdrawals start at $5 CAD with no fees.</p>' : ""}</section></main>` +
+    `<main class="auth-layout"><section class="card"><p class="eyebrow">Your recycling journey</p><h1 class="section-gap">${title}</h1><p class="intro">${intro}</p><div data-error></div><form id="auth-form" data-type="${type}">${signup ? `<div class="field-row">${field("first_name", "First name", "text", 'required autocomplete="given-name" maxlength="100"')}${field("last_name", "Last name", "text", 'required autocomplete="family-name" maxlength="100"')}</div>` : ""}${signup || recover ? field("email", "Email", "email", 'required autocomplete="email"') : ""}${signup ? field("phone", "Phone number", "tel", 'required placeholder="+16045550123" autocomplete="tel"') + '<p class="supporting">Use your international country code. Account verification is by email.</p>' : ""}${type === "login" ? field("identifier", "Email", "email", 'required autocomplete="username"') : ""}${signup || type === "login" || reset ? field("password", reset ? "New password" : "Password", "password", `required minlength="8" maxlength="1024" autocomplete="${type === "login" ? "current-password" : "new-password"}"`) + `<button class="link" data-action="toggle-password" type="button">Show password</button>` : ""}${signup || reset ? field("confirm_password", "Confirm password", "password", 'required minlength="8" autocomplete="new-password"') : ""}${verify ? field("contact", "Email", "email", 'required autocomplete="email"', verificationContact) + field("token", "Verification code", "text", 'required autocomplete="one-time-code" maxlength="300"') : ""}<div class="form-actions"><button class="button" type="submit">${signup ? "Create account" : recover ? "Send recovery instructions" : verify ? "Verify account" : reset ? "Save new password" : "Log in"} ${icon("arrow")}</button></div></form><p class="auth-switch">${signup ? 'Already have an account? <a class="link" href="#/login">Log in</a>' : type === "login" ? 'New to Recy? <a class="link" href="#/signup">Create account</a><br><br><a class="link" href="#/recover">Forgot password?</a>' : '<a class="link" href="#/login">Back to log in</a>'}</p>${signup ? '<p class="supporting">Bottle rewards are credited after your machine session is submitted. Withdrawals start at $5 CAD with no fees.</p>' : ""}</section></main>` +
     publicFooter();
 }
 async function depositDetail(id) {
@@ -974,18 +979,14 @@ async function action(name, target) {
     );
     return;
   }
-  if (name.startsWith("change-")) {
+  if (["change-email", "change-password"].includes(name)) {
     const kind = name.slice(7);
     modal(
       "Change " + kind,
-      `<form>${field(kind, kind === "phone" ? "International phone number" : kind === "email" ? "New email" : "New password", kind === "phone" ? "tel" : kind, "required" + (kind === "password" ? ' minlength="8" autocomplete="new-password"' : ""))}${submitButton("Continue")}</form>`,
+      `<form>${field(kind, kind === "email" ? "New email" : "New password", kind, "required" + (kind === "password" ? ' minlength="8" autocomplete="new-password"' : ""))}${submitButton("Continue")}</form>`,
       async (data) => {
         await request("/auth/" + kind, { method: "POST", body: data });
-        if (kind === "phone") {
-          verificationContact = data.phone;
-          location.hash = "/verify";
-        } else if (kind === "email")
-          toast("Check your email to confirm the change");
+        if (kind === "email") toast("Check your email to confirm the change");
       },
     );
     return;
@@ -1158,14 +1159,14 @@ document.addEventListener("submit", async (event) => {
     if (type === "recover") {
       await request("/auth/recover", { method: "POST", body: data });
       verificationContact = data.email;
-      location.hash = "/verify";
+      location.hash = "/verify-recovery";
       toast("If recovery is available, check your email.");
     }
-    if (type === "verify") {
+    if (["verify", "verify-recovery"].includes(type)) {
       const payload = {
-        type: data.type,
+        type: type === "verify-recovery" ? "recovery" : "email",
         token: data.token,
-        [data.type === "phone_change" ? "phone" : "email"]: data.contact,
+        email: data.contact,
       };
       await request("/auth/verify", { method: "POST", body: payload });
       try {
@@ -1174,7 +1175,7 @@ document.addEventListener("submit", async (event) => {
         me = null;
       }
       location.hash =
-        data.type === "recovery"
+        type === "verify-recovery"
           ? "/reset-password"
           : me
             ? "/overview"
@@ -1222,7 +1223,14 @@ async function route() {
   const ticket = ++generation;
   if (dialog.open) dialog.close();
   if (
-    ["login", "signup", "recover", "verify", "reset-password"].includes(current)
+    [
+      "login",
+      "signup",
+      "recover",
+      "verify",
+      "verify-recovery",
+      "reset-password",
+    ].includes(current)
   ) {
     authPage(current);
     return;
