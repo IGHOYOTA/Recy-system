@@ -10,6 +10,12 @@ notifications, support and account settings. Back-office navigation depends on
 server-provided roles and includes review queues, fleet capacity, evacuations,
 receiving depots, finance processing, staff provisioning and audit records.
 
+Signup verification at `#/verify` is email-only. Password recovery starts from
+Forgot password and uses a separate `#/verify-recovery` screen before password
+reset. Neither screen offers a verification-type selector. Phone verification and
+phone login are not offered by the current portal; the signup phone field still
+collects the contact information required by the existing API.
+
 Screenshots use synthetic QA data:
 [customer desktop](previews/customer-desktop.png),
 [customer mobile](previews/customer-mobile.png),
