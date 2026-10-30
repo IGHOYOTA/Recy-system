@@ -155,7 +155,12 @@ class AppService:
                 from .refresh import imported_date
                 baseline=imported_date(latest)
                 known=latest.get('source_updated_on')
-                fresh=(monitor['observed_source_date']==baseline if known else monitor['observed_source_date']<=baseline)
+                observed=monitor['observed_source_date']
+                if observed is None:
+                    fresh=bool(latest.get('source_fingerprint') and
+                               latest['source_fingerprint']==monitor.get('observed_source_fingerprint'))
+                else:
+                    fresh=(observed==baseline if known else observed<=baseline)
         require(fresh,'Registry requires a fresh publication or an up-to-date source check',503,'registry_unavailable')
         column=upc_column(json.loads(latest['headers']))
         match=c.execute('SELECT 1 FROM recy.registered_products WHERE recy.normalize_upc(%s)=%%s LIMIT 1' % quote(column),(code,)).fetchone()

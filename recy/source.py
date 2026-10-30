@@ -64,6 +64,8 @@ class RegistryHTML(HTMLParser):
         self.types = []
         self.text = []
         self.result_counts = set()
+        self.page_ranges = []
+        self._link_range = None
         self._table = None
         self._row = None
         self._cell = None
@@ -71,6 +73,14 @@ class RegistryHTML(HTMLParser):
         self._link = None
         self._ignore = 0
         self.feed(repair_cell_text(html))
+        if not self.result_counts and self.page_ranges:
+            page,start,end=max(self.page_ranges)
+            numeric=[int(label.replace(',','')) for _,_,label in self.links if re.fullmatch(r'\d[\d,]*',label)]
+            # Range titles on Return-It's global final-page link supply the total
+            # when the old date/count paragraph is absent. Traversal and sampled
+            # last-page size still independently validate completeness.
+            if numeric and page==max(numeric) and start==(page-1)*30+1 and 0<end-start+1<=30:
+                self.result_counts.add(end)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -96,6 +106,8 @@ class RegistryHTML(HTMLParser):
         if tag == "br" and self._cell:
             self._cell[1].append(" ")
         if tag == "a":
+            page_range = re.fullmatch(r'([\d,]+)\s+to\s+([\d,]+)',attrs.get('title',''),re.I)
+            self._link_range = tuple(int(v.replace(',','')) for v in page_range.groups()) if page_range else None
             rel = attrs.get("rel", "")
             if "disabled" in attrs.get("class", "").split() or attrs.get("aria-disabled") == "true":
                 rel += " disabled"
@@ -129,8 +141,12 @@ class RegistryHTML(HTMLParser):
             self.tables.append(self._table)
             self._table = None
         if tag == "a" and self._link is not None:
+            label=text_content(self._link[2])
+            if self._link_range and re.fullmatch(r'\d[\d,]*',label):
+                self.page_ranges.append((int(label.replace(',','')), *self._link_range))
             self.links.append((self._link[0], self._link[1], text_content(self._link[2])))
             self._link = None
+            self._link_range = None
 
     def products(self):
         candidates = []

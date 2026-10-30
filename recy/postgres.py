@@ -108,7 +108,7 @@ class PostgresDatabase:
             return {'upc': code, 'registered': bool(rows), 'matches': rows,
                     'last_synced_at': latest['completed_at'], 'source_url': latest['source_url']}
 
-    def sync(self, snapshot, started_at, max_removal_fraction=0.25, dry_run=False, source_updated_on=None, refresh_lease=None):
+    def sync(self, snapshot, started_at, max_removal_fraction=0.25, dry_run=False, source_updated_on=None, refresh_lease=None, source_fingerprint=None):
         headers = snapshot.headers
         if not 0 <= max_removal_fraction <= 1:
             raise ValueError('Removal fraction must be between 0 and 1')
@@ -179,48 +179,77 @@ class PostgresDatabase:
                 db.execute('UPDATE recy.sync_runs SET source_updated_on=%s WHERE id=%s',
                            (source_updated_on,publication['id']))
                 report['source_updated_on']=str(source_updated_on)
+            if source_fingerprint is not None:
+                db.execute('UPDATE recy.sync_runs SET source_fingerprint=%s WHERE id=%s',
+                           (source_fingerprint,publication['id']))
             return report
 
     def initialize_source_monitor(self):
-        """Explicit source-only migration; never upgrade unrelated application tables."""
-        name='005_source_refresh_schedule.sql'
-        sql=files('recy').joinpath('migrations/'+name).read_text()
-        checksum=hashlib.sha256(sql.encode()).hexdigest()
+        """Explicit source-only migrations; never upgrade application tables."""
+        applied=[]
         with self.connect() as db:
             db.execute("SET LOCAL lock_timeout='10s'")
             db.execute("SET LOCAL statement_timeout='90s'")
             db.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID+1,))
-            db.execute('''CREATE TABLE IF NOT EXISTS recy.schema_migrations (
-                version text PRIMARY KEY,checksum text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())''')
+            db.execute("""CREATE TABLE IF NOT EXISTS recy.schema_migrations (
+                version text PRIMARY KEY,checksum text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())""")
             db.execute('REVOKE ALL ON recy.schema_migrations FROM PUBLIC')
-            old=db.execute('SELECT checksum FROM recy.schema_migrations WHERE version=%s',(name,)).fetchone()
-            if old:
-                if old['checksum']!=checksum:raise SourceError('Applied migration checksum mismatch: '+name)
-                return {'applied':[]}
-            db.execute(sql)
-            db.execute('INSERT INTO recy.schema_migrations(version,checksum) VALUES (%s,%s)',(name,checksum))
-            return {'applied':[name]}
+            for name in ('005_source_refresh_schedule.sql','006_source_content_fallback.sql'):
+                sql=files('recy').joinpath('migrations/'+name).read_text()
+                checksum=hashlib.sha256(sql.encode()).hexdigest()
+                old=db.execute('SELECT checksum FROM recy.schema_migrations WHERE version=%s',(name,)).fetchone()
+                if old:
+                    if old['checksum']!=checksum:raise SourceError('Applied migration checksum mismatch: '+name)
+                    continue
+                db.execute(sql)
+                db.execute('INSERT INTO recy.schema_migrations(version,checksum) VALUES (%s,%s)',(name,checksum))
+                applied.append(name)
+        return {'applied':applied}
 
-    def record_source_observation(self, observed, checked_at, due_at, zone):
+    def record_source_observation(self, observed, checked_at, due_at, zone, source_fingerprint=None):
         from .refresh import imported_date
+        if observed is None and not source_fingerprint:
+            raise SourceError('Content fallback requires a verified fingerprint and product total')
         with self.connect() as db:
             db.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID+2,))
-            # Serialize with publications; no HTTP is performed while holding this lock.
             db.execute('SELECT pg_advisory_xact_lock(%s)',(LOCK_ID,))
-            baseline=imported_date(self._latest(db))
-            db.execute('''INSERT INTO recy.source_monitor VALUES (1,%s,%s)
-                ON CONFLICT(id) DO UPDATE SET last_checked_at=EXCLUDED.last_checked_at,
-                observed_source_date=EXCLUDED.observed_source_date
-                WHERE recy.source_monitor.last_checked_at<=EXCLUDED.last_checked_at''',(checked_at,observed))
-            if baseline is not None and observed<=baseline:
+            latest=self._latest(db)
+            baseline=imported_date(latest)
+            db.execute("""INSERT INTO recy.source_monitor(id,last_checked_at,observed_source_date,observed_source_fingerprint)
+                VALUES (1,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET last_checked_at=EXCLUDED.last_checked_at,
+                observed_source_date=EXCLUDED.observed_source_date,observed_source_fingerprint=EXCLUDED.observed_source_fingerprint
+                WHERE recy.source_monitor.last_checked_at<=EXCLUDED.last_checked_at""",(checked_at,observed,source_fingerprint))
+            if observed is not None and baseline is not None and observed<=baseline:
                 return {'status':'unchanged' if observed==baseline else 'older_source_date',
                         'source_updated_on':observed.isoformat(),'imported_date':baseline.isoformat()}
-            job=db.execute('''INSERT INTO recy.source_refresh_jobs(source_updated_on,detected_at,due_at,timezone)
-                VALUES (%s,%s,%s,%s) ON CONFLICT(source_updated_on) DO NOTHING RETURNING *''',
-                (observed,checked_at,due_at,zone)).fetchone()
-            queued=job is not None
-            if job is None:job=db.execute('SELECT * FROM recy.source_refresh_jobs WHERE source_updated_on=%s',(observed,)).fetchone()
-            return {'status':'queued' if queued else 'already_queued','source_updated_on':observed.isoformat(),
+            if observed is None and latest and latest.get('source_fingerprint')==source_fingerprint:
+                return {'status':'unchanged','source_updated_on':None,'detection_method':'content'}
+            if observed is not None:
+                job=db.execute("""INSERT INTO recy.source_refresh_jobs(source_updated_on,detected_at,due_at,timezone,source_fingerprint)
+                    VALUES (%s,%s,%s,%s,%s) ON CONFLICT(source_updated_on) DO NOTHING RETURNING *""",
+                    (observed,checked_at,due_at,zone,source_fingerprint)).fetchone()
+                queued=job is not None
+                if job is None:job=db.execute('SELECT * FROM recy.source_refresh_jobs WHERE source_updated_on=%s',(observed,)).fetchone()
+            else:
+                # Preserve the deadline of a release positively detected while its date was available.
+                job=db.execute("""SELECT * FROM recy.source_refresh_jobs WHERE source_updated_on IS NOT NULL
+                    AND status IN ('pending','running') ORDER BY due_at DESC,id DESC LIMIT 1""").fetchone()
+                queued=False
+                if job is None:
+                    job=db.execute("""INSERT INTO recy.source_refresh_jobs(source_updated_on,detected_at,due_at,timezone,source_fingerprint)
+                        VALUES (NULL,%s,%s,%s,%s) ON CONFLICT(source_fingerprint) WHERE source_updated_on IS NULL
+                        DO NOTHING RETURNING *""",(checked_at,due_at,zone,source_fingerprint)).fetchone()
+                    queued=job is not None
+                    if job is None:
+                        job=db.execute("SELECT * FROM recy.source_refresh_jobs WHERE source_updated_on IS NULL AND source_fingerprint=%s",(source_fingerprint,)).fetchone()
+                        if job['status'] in ('completed','superseded'):
+                            job=db.execute("""UPDATE recy.source_refresh_jobs SET status='pending',detected_at=%s,due_at=%s,
+                                timezone=%s,lease_owner=NULL,lease_until=NULL,completed_at=NULL,completed_sync_run_id=NULL,
+                                last_error_code=NULL WHERE id=%s RETURNING *""",(checked_at,due_at,zone,job['id'])).fetchone()
+                            queued=True
+            return {'status':'queued' if queued else 'already_queued',
+                    'source_updated_on':observed.isoformat() if observed else None,
+                    'detection_method':'date' if observed else 'content',
                     'due_at':job['due_at'].isoformat(),'timezone':job['timezone'],'job_id':job['id']}
 
     def claim_source_refresh(self, now_at, owner, lease_seconds):
@@ -230,7 +259,7 @@ class PostgresDatabase:
             if db.execute("SELECT 1 FROM recy.source_refresh_jobs WHERE lease_until>%s",(now_at,)).fetchone():return None
             job=db.execute('''SELECT * FROM recy.source_refresh_jobs WHERE status IN ('pending','running')
                 AND due_at<=%s AND (lease_until IS NULL OR lease_until<=%s)
-                ORDER BY source_updated_on DESC FOR UPDATE SKIP LOCKED LIMIT 1''',(now_at,now_at)).fetchone()
+                ORDER BY due_at DESC,id DESC FOR UPDATE SKIP LOCKED LIMIT 1''',(now_at,now_at)).fetchone()
             if job is None:return None
             return db.execute('''UPDATE recy.source_refresh_jobs SET status='running',attempts=attempts+1,
                 lease_owner=%s,lease_until=%s,last_attempt_at=%s,last_error_code=NULL WHERE id=%s RETURNING *''',

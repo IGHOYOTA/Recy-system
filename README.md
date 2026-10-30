@@ -103,10 +103,14 @@ In **Settings → Secrets and variables → Actions**, add a repository secret
 named **`DATABASE_URL`** with the same Supabase Session pooler string. Then open
 **Actions → Refresh Return-It registry → Run workflow** for the initial scrape.
 
-The workflow checks the site's **Database Last Updated** date daily at
+The workflow checks the site's **Database Last Updated** date (including final-page
+metadata when necessary) daily at
 **11:23 p.m. America/Vancouver**. A newer date queues a scrape for the next
 **12:00 midnight** in Vancouver. An unchanged or older date does not start another
-scrape; the previous automatic seven-day refresh has been removed.
+scrape; the previous automatic seven-day refresh has been removed. When a reliable
+date is unavailable, the approved fallback uses the product total and first-page
+fingerprint, with the same midnight gate. It can miss changes elsewhere that leave
+those signals unchanged.
 
 Each scrape invocation works for at most **3 hours**, saving unpublished page
 checkpoints in Supabase. Recovery slots at **3:15, 6:15 and 9:15 a.m.** resume only
@@ -116,7 +120,7 @@ start-time guarantee. Workflow concurrency and database leases prevent overlappi
 workers. No credentials are stored in workflow files or artifacts.
 
 On an approved merge, the workflow initializes only the private registry and source
-monitoring state (migration 005), then checks the source date. It never implicitly
+monitoring state (migrations 005–006), then checks the source date. It never implicitly
 upgrades unrelated application tables. A code push cannot force a bulk refresh.
 Manual workflow runs offer **check** (queue a changed date) and **scrape** (run or
 resume an already-due job); neither bypasses the date or midnight gate.
