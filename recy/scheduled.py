@@ -17,9 +17,17 @@ class TimeBudgetReached(Exception):
 def source_version(document):
     match = re.search(r'Database Last Updated\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})',
                       text_content(document.text))
-    if not match or len(document.result_counts) != 1:
-        raise SourceError('Resumable scraping requires source update date and total count')
-    return match[1], next(iter(document.result_counts))
+    counts=set(document.result_counts)
+    if len(counts)!=1:
+        raise SourceError('Resumable scraping requires one unambiguous product total')
+    return match[1] if match else None, next(iter(counts))
+
+
+def content_fingerprint(html):
+    document=RegistryHTML(html)
+    headers,rows=document.products()
+    _,total=source_version(document)
+    return hashlib.sha256(json.dumps([total,headers,rows]).encode()).hexdigest()
 
 
 def fingerprint(html):
@@ -29,16 +37,42 @@ def fingerprint(html):
     return hashlib.sha256(json.dumps(value).encode()).hexdigest()
 
 
-def compact_page(html):
+def read_source_page(fetch):
+    """Resolve metadata omitted on the first page from the verified final page."""
+    html=fetch(SOURCE_URL)
+    document=RegistryHTML(html)
+    version,total=source_version(document)
+    if version is not None:
+        return html
+    headers,rows=document.products()
+    links={int(label.replace(',','')):href for href,_,label in document.links if re.fullmatch(r'\d[\d,]*',label)}
+    last=max(links) if links else 1
+    if last>1:
+        final=RegistryHTML(fetch(Scraper._page_url(SOURCE_URL,links[last])))
+        final_headers,final_rows=final.products()
+        final_date,final_total=source_version(final)
+        ended=any('disabled' in rel and re.search(r'next',rel+' '+label,re.I) for _,rel,label in final.links)
+        if headers!=final_headers or total!=final_total or not ended or (last-1)*len(rows)+len(final_rows)!=total:
+            raise SourceError('Final-page metadata or page size does not match the first page')
+        if final_date:
+            # This is the actual source date from another page, never an invented date.
+            html+='<p title="%s products">Database Last Updated %s</p>'%(total,escape(final_date))
+    return html
+
+
+def compact_page(html, verified_version=None):
     """Store table data and relevant paging links, not repeated site assets/navigation."""
     document = RegistryHTML(html)
     headers, rows = document.products()
     version, total = source_version(document)
+    if version is None and verified_version is not None:
+        version=verified_version[0]
     numbers = [int(label.replace(',', '')) for _, _, label in document.links
                if re.fullmatch(r'\d[\d,]*', label)]
     # Rn is the verified source's page-number parameter. Keep nearby links and the last.
     current = (int(rows[0][0]) - 1) // 30 + 1 if headers[0] == '#' else None
-    parts = ['<p title="%s products">Database Last Updated %s</p><table><tr>' % (total, escape(version))]
+    label='Database Last Updated '+version if version else 'Source update date unavailable'
+    parts = ['<p title="%s products">%s</p><table><tr>' % (total, escape(label))]
     parts.extend('<th>%s</th>' % escape(h) for h in headers)
     parts.append('</tr>')
     for row in rows:
@@ -62,11 +96,11 @@ def run_scheduled(database, max_seconds=10800, delay=1.0, dry_run=False, first_h
     scraper = Scraper(delay=delay)
     deadline = time.monotonic() + max_seconds
     fetch = scraper.fetch
-    first = first_html if first_html is not None else fetch(SOURCE_URL)
+    first = first_html if first_html is not None else read_source_page(fetch)
     from .refresh import imported_date, source_date
     observed = source_date(first, datetime.now(timezone.utc))
     baseline = imported_date(database.status())
-    if baseline is not None and observed <= baseline:
+    if observed is not None and baseline is not None and observed <= baseline:
         return {'status':'already_current','source_updated_on':observed.isoformat()}
     generation = fingerprint(first)
     version = source_version(RegistryHTML(first))
@@ -84,9 +118,10 @@ def run_scheduled(database, max_seconds=10800, delay=1.0, dry_run=False, first_h
         if cached is not None:
             return cached
         html = fetch(url)
-        if source_version(RegistryHTML(html)) != version:
+        page_version=source_version(RegistryHTML(html))
+        if page_version[1]!=version[1] or (page_version[0] is not None and page_version[0]!=version[0]):
             raise SourceError('Registry changed during scrape; resume will start a new checkpoint')
-        compact = compact_page(html)
+        compact = compact_page(html,version)
         database.checkpoint_put(generation, url, compact)
         fetched += 1
         if fetched % 20 == 0:
@@ -99,9 +134,10 @@ def run_scheduled(database, max_seconds=10800, delay=1.0, dry_run=False, first_h
     except TimeBudgetReached:
         return {'status': 'checkpointed', 'new_pages': fetched,
                 'message': 'Resume on next scheduled or manual run; active registry unchanged'}
-    if fingerprint(fetch(SOURCE_URL)) != generation:
+    if fingerprint(read_source_page(fetch)) != generation:
         raise SourceError('Registry changed before publication; active registry unchanged')
-    report = database.sync(snapshot, started_at, dry_run=dry_run, source_updated_on=observed, refresh_lease=refresh_lease)
+    report = database.sync(snapshot, started_at, dry_run=dry_run, source_updated_on=observed,
+                           refresh_lease=refresh_lease, source_fingerprint=content_fingerprint(first))
     if not dry_run:
         database.checkpoint_clear(generation)
     return {'status': 'dry_run' if dry_run else 'published', **report}

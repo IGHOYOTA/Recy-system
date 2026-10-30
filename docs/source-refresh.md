@@ -1,17 +1,24 @@
 # Change-driven Return-It refresh
 
 The scheduler compares the exact registered-brand page's **Database Last Updated**
-date with the version last successfully imported. It does not refresh merely
+date with the version last successfully imported. When no reliable date is available,
+the approved fallback compares the first-page product fingerprint and verified product
+total with the last imported fingerprint. It does not refresh merely
 because a week has elapsed. Product table columns, leading-zero UPC handling,
 atomic publication, removal guards and page checkpointing remain unchanged.
 
 ## Daily flow
 
-1. At **11:23 p.m. America/Vancouver**, request only the first unfiltered results
+1. At **11:23 p.m. America/Vancouver**, request the first unfiltered results
    page at `https://www.return-it.ca/registeredbrands/?upc=&St=&flvr=&type=&size=`.
-   Validate that it is a real product page with a source date and one result count.
+   Validate the product table and total. If its date is absent, probe the final page
+   and verify its columns, disabled Next link and row-count arithmetic. A date
+   published there takes priority. Pagination range titles can supply the total
+   when the old date/count paragraph is absent.
 2. Compare dates. An equal or older source date causes no scrape. A newer source
-   date creates a durable job for the upcoming Vancouver midnight. Repeated checks
+   date creates a durable job for the upcoming Vancouver midnight. If neither
+   endpoint publishes a date, a different content fingerprint queues a content-version
+   job for the same midnight gate. Identical fingerprints skip a new scrape. Repeated checks
    for the same date preserve its original deadline instead of postponing it.
    An empty database queues its initial import for midnight.
 3. At **12:00 midnight**, claim only an eligible job. Revalidate the first page,
@@ -45,8 +52,34 @@ metadata use the same legacy baseline rule.
 
 If the source advances while a job is waiting, a newer version gets its own next-
 midnight deadline. The old version is superseded, not used to start the new release
-early. A backwards date, future date, malformed page or blocked request is surfaced
+early. An explicitly backwards date, future date, malformed page or blocked request is surfaced
 as a failure and does not advance successful monitoring/import state.
+
+## Approved fallback when dates disappear
+
+The live failure on October 29, 2026 exposed product rows and pagination without
+first-page metadata; its final page still published October 28 and 156,407 products.
+The parser now resolves that authoritative final-page metadata before falling back.
+Pages without their own date can share that verified global version in checkpoints;
+any explicit conflicting date or count is still rejected. The first/final metadata
+and first-page fingerprint are rechecked before publication.
+
+If all sampled metadata is undated, the fallback hashes the total, product column
+labels and first-page rows. A dated job already positively detected and due may
+finish against that stable content version. A new content-only change receives its
+own next-midnight deadline. Publication records the fingerprint and keeps the source
+date NULL; it never labels the source with the clock date or an old queued date.
+
+This fallback can miss edits on other pages that leave the count and first page
+unchanged. It is a change signal, not a complete daily comparison of every UPC.
+Complete page coverage, final-page size, removal guards and atomic publication still
+apply to every import. If those cannot be verified, publication fails closed.
+
+Migration 006 adds optional fingerprint fields, nullable source-date provenance and
+a unique content-job key. Source-only initialization applies/checksums 005 and 006;
+no existing applied migrations are changed. The 48-hour monitoring freshness extension
+requires an observed fingerprint matching the published fingerprint when dates are
+missing. A changed fingerprint does not declare an old snapshot current.
 
 ## Clock rules and GitHub schedules
 
@@ -80,8 +113,8 @@ and two private, RLS-enabled tables in `recy`:
 - `source_refresh_jobs`: observed version, original deadline, status, lease,
   attempts, error code and successful publication reference.
 
-`python -m recy init-source-monitor` applies and checksum-tracks only this source
-migration. Run `init-db` first. GitHub's reviewed default-branch workflow explicitly
+`python -m recy init-source-monitor` applies and checksum-tracks only the source
+migrations (005 and 006). Run `init-db` first. GitHub's reviewed default-branch workflow explicitly
 runs these two source-only initialization commands, so scheduled checks do not
 silently apply unrelated app migrations. The standard full `migrate` command also
 recognizes migration 005 and verifies its checksum. Existing migrations are not
@@ -96,7 +129,8 @@ merge, initialization/checking starts; a code push never forces an immediate scr
 Previously an import older than eight days made bottle verification unavailable.
 That would incorrectly reject bottles if the source simply stayed unchanged.
 The new logic accepts an older publication when a successful source check within
-the last **48 hours** confirms its imported date is still current. Historical
+the last **48 hours** confirms its imported date is still current, or confirms its published fingerprint
+when the source is undated. Historical
 publications use the legacy run-start baseline above. For a known imported version,
 an older/regressed observed date does not count as confirmation.
 

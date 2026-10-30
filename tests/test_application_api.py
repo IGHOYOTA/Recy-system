@@ -378,6 +378,19 @@ class ApplicationAPITests(unittest.TestCase):
         with self.db.connect() as c:c.execute("UPDATE recy.source_monitor SET last_checked_at=now()-interval '3 days'")
         _,row=self.bottle(sid,2)
         self.assertEqual(row['eligibility_status'],'unavailable')
+
         self.db.record_source_observation(date(2020,1,2),now,next_midnight(now),'America/Vancouver')
         _,row=self.bottle(sid,3)
+        self.assertEqual(row['eligibility_status'],'unavailable')
+
+    def test_undated_source_check_requires_matching_imported_content(self):
+        from recy.refresh import next_midnight
+        with self.db.connect() as c:
+            c.execute("UPDATE recy.sync_runs SET completed_at='2020-01-01T00:00:00+00:00',source_updated_on=NULL,source_fingerprint='published-content'")
+        now=utcnow()
+        self.db.record_source_observation(None,now,next_midnight(now),'America/Vancouver','published-content')
+        sid=self.start()['session_id'];_,row=self.bottle(sid)
+        self.assertEqual(row['eligibility_status'],'eligible')
+        self.db.record_source_observation(None,now,next_midnight(now),'America/Vancouver','changed-content')
+        _,row=self.bottle(sid,2)
         self.assertEqual(row['eligibility_status'],'unavailable')

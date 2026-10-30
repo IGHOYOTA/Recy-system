@@ -11,6 +11,7 @@ on:
       - 'recy/__main__.py'
       - 'pyproject.toml'
       - 'recy/migrations/005_source_refresh_schedule.sql'
+      - 'recy/migrations/006_source_content_fallback.sql'
       - '.github/workflows/scrape.yml'
   schedule:
     # B.C. uses permanent Pacific time (UTC-7) from March 2026. Newer source dates queue next midnight.
